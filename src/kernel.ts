@@ -20,18 +20,16 @@ const DEFAULT_SIGMA_RANGE = 3;  // CPU costs more than 3 std. deviations from th
 const ROOT_TASK_ID = 0;
 
 // tasks, queues, current_task, max_task_id, & empty_task_IDs need to be available to create/kill_tasks and kernel core.
-let current_task: number = ROOT_TASK_ID;
-const PRIORITY_COUNT = PRIORITY.IGNORED;
+const PRIORITY_COUNT = PRIORITY.LOW + 1;
 let i, j;
 let raw_memory = RawMemory.get();
-let memory: Memory;
-if ( raw_memory.length === 0 ) {
-    memory = {};
-} else {
-    memory = JSON.parse(RawMemory.get()) as Memory; // TODO: Binary => Base<2^15> serialization
-}
 delete global.Memory;
-global.Memory = memory;
+if ( raw_memory.length === 0 ) {
+    global.Memory = {};
+} else {
+    global.Memory = JSON.parse(RawMemory.get()) as Memory; // TODO: Binary => Base<2^15> serialization
+}
+const memory = global.Memory;
 const kernel: Kernel_Data = memory.kernel === undefined
     ? memory.kernel = {
         stats: {
@@ -49,7 +47,7 @@ const kernel: Kernel_Data = memory.kernel === undefined
         empty_task_ids: new Set<Task_ID>(),
     }
     : memory.kernel;
-const { stats, tasks, queues, empty_task_ids } = kernel;
+const { stats, queues, empty_task_ids } = kernel;
 
 if ( queues.length !== PRIORITY_COUNT ) {
     for ( i = queues.length; i < PRIORITY_COUNT; i++ ) {
@@ -86,7 +84,7 @@ const Task_Functions: Record<Task_Key, Task> = {};
 /***********
  * Exports *
  ***********/
-export { PRIORITY } from "./data_structures";
+export { PRIORITY, Task_ID } from "./data_structures";
 
 export enum LOG_LEVEL {
     OFF = 0,
@@ -97,6 +95,20 @@ export enum LOG_LEVEL {
     DEBUG,
     TRACE
 }
+
+/**
+ * Returns the tasks scheduled to run the next tick.
+ *
+ * @return {Tasks} - Mapping of Tasks by Task_ID.
+ */
+export const { tasks } = kernel;
+
+/**
+ * Returns the ID of the current task.
+ *
+ * @return {Task_ID} - ID of current task.
+ */
+export let current_task: number = ROOT_TASK_ID;
 
 /**
  * Register the code object to be run as part of a task. This function should only be called outside of the main
@@ -203,20 +215,6 @@ export const kill_task = (id: Task_ID = current_task): Array<Task_ID> => {
 
     return killed;
 };
-
-/**
- * Returns the ID of the current task.
- *
- * @return {Task_ID} - ID of current task.
- */
-export const get_task_ID = (): Task_ID => current_task;
-
-/**
- * Returns the tasks scheduled to run the next tick.
- *
- * @return {Tasks} - Mapping of Tasks by Task_ID.
- */
-export const get_tasks = (): Tasks => tasks;
 
 /**
  * This function is called when CPU performance is outside of acceptable parameters.

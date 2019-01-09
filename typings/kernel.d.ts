@@ -3,7 +3,7 @@ export declare type Logger = (level: LOG_LEVEL, message: string) => void;
 /***********
  * Exports *
  ***********/
-export { PRIORITY } from "./data_structures";
+export { PRIORITY, Task_ID } from "./data_structures";
 export declare enum LOG_LEVEL {
     OFF = 0,
     FATAL = 1,
@@ -13,6 +13,18 @@ export declare enum LOG_LEVEL {
     DEBUG = 5,
     TRACE = 6
 }
+/**
+ * Returns the tasks scheduled to run the next tick.
+ *
+ * @return {Tasks} - Mapping of Tasks by Task_ID.
+ */
+export declare const tasks: Record<number, Task_Parameters>;
+/**
+ * Returns the ID of the current task.
+ *
+ * @return {Task_ID} - ID of current task.
+ */
+export declare let current_task: number;
 /**
  * Register the code object to be run as part of a task. This function should only be called outside of the main
  * loop, before the kernel is run for the first time.
@@ -47,18 +59,6 @@ export declare const create_task: ({ priority, task_key, task_args, starvation_t
  * @return {Array<Task_ID>} - The IDs of all killed tasks.
  */
 export declare const kill_task: (id?: number) => number[];
-/**
- * Returns the ID of the current task.
- *
- * @return {Task_ID} - ID of current task.
- */
-export declare const get_task_ID: () => number;
-/**
- * Returns the tasks scheduled to run the next tick.
- *
- * @return {Tasks} - Mapping of Tasks by Task_ID.
- */
-export declare const get_tasks: () => Record<number, Task_Parameters>;
 /**
  * This function is called when CPU performance is outside of acceptable parameters.
  *

@@ -8,12 +8,11 @@ export interface Kernel_Stats {
     shutdown_average: number | undefined;
     shutdown_variance: number;
 }
-export declare const enum PRIORITY {
+export declare enum PRIORITY {
     CRITICAL = 0,
     HIGH = 1,
     MEDIUM = 2,
-    LOW = 3,
-    IGNORED = 4
+    LOW = 3
 }
 export declare const enum RETURN_CODE {
     OK = 0

@@ -2,6 +2,13 @@
 
 Object.defineProperty(exports, '__esModule', { value: true });
 
+(function (PRIORITY) {
+    PRIORITY[PRIORITY["CRITICAL"] = 0] = "CRITICAL";
+    PRIORITY[PRIORITY["HIGH"] = 1] = "HIGH";
+    PRIORITY[PRIORITY["MEDIUM"] = 2] = "MEDIUM";
+    PRIORITY[PRIORITY["LOW"] = 3] = "LOW";
+})(exports.PRIORITY || (exports.PRIORITY = {}));
+
 const DEFAULT_ALPHA_MIN = 0.02; // Last 100 ticks have ~85% influence on EMA, aka '100-day EMA'.
 const DEFAULT_ALPHA_DECAY = 0.8; // Rate at which alpha decays from 0.5 to alpha_min each tick. Increase if high CPU
 // costs when relaunching are negatively impacting CPU estimates later on.
@@ -11,19 +18,17 @@ const DEFAULT_SHUTDOWN_CPU_ESTIMATE = 0.5;
 const DEFAULT_SIGMA_RANGE = 3; // CPU costs more than 3 std. deviations from their mean (~0.1%) will be logged.
 const ROOT_TASK_ID = 0;
 // tasks, queues, current_task, max_task_id, & empty_task_IDs need to be available to create/kill_tasks and kernel core.
-let current_task = ROOT_TASK_ID;
-const PRIORITY_COUNT = 4 /* IGNORED */;
+const PRIORITY_COUNT = exports.PRIORITY.LOW + 1;
 let i, j;
 let raw_memory = RawMemory.get();
-let memory;
+delete global.Memory;
 if (raw_memory.length === 0) {
-    memory = {};
+    global.Memory = {};
 }
 else {
-    memory = JSON.parse(RawMemory.get()); // TODO: Binary => Base<2^15> serialization
+    global.Memory = JSON.parse(RawMemory.get()); // TODO: Binary => Base<2^15> serialization
 }
-delete global.Memory;
-global.Memory = memory;
+const memory = global.Memory;
 const kernel = memory.kernel === undefined
     ? memory.kernel = {
         stats: {
@@ -41,7 +46,7 @@ const kernel = memory.kernel === undefined
         empty_task_ids: new Set(),
     }
     : memory.kernel;
-const { stats, tasks, queues, empty_task_ids } = kernel;
+const { stats, queues, empty_task_ids } = kernel;
 if (queues.length !== PRIORITY_COUNT) {
     for (i = queues.length; i < PRIORITY_COUNT; i++) {
         queues.push([]);
@@ -76,6 +81,18 @@ const Task_Functions = {};
     LOG_LEVEL[LOG_LEVEL["DEBUG"] = 5] = "DEBUG";
     LOG_LEVEL[LOG_LEVEL["TRACE"] = 6] = "TRACE";
 })(exports.LOG_LEVEL || (exports.LOG_LEVEL = {}));
+/**
+ * Returns the tasks scheduled to run the next tick.
+ *
+ * @return {Tasks} - Mapping of Tasks by Task_ID.
+ */
+const { tasks } = kernel;
+/**
+ * Returns the ID of the current task.
+ *
+ * @return {Task_ID} - ID of current task.
+ */
+exports.current_task = ROOT_TASK_ID;
 /**
  * Register the code object to be run as part of a task. This function should only be called outside of the main
  * loop, before the kernel is run for the first time.
@@ -120,8 +137,8 @@ const create_task = ({ priority, task_key, task_args, starvation_threshold, cost
         max_task_id++;
         id = max_task_id;
     }
-    if (parent === undefined && current_task !== ROOT_TASK_ID) {
-        parent = current_task;
+    if (parent === undefined && exports.current_task !== ROOT_TASK_ID) {
+        parent = exports.current_task;
     }
     if (parent !== undefined) {
         tasks[parent].children.push(id);
@@ -148,7 +165,7 @@ const create_task = ({ priority, task_key, task_args, starvation_threshold, cost
  * @param {Task_ID} id - ID of task to kill.
  * @return {Array<Task_ID>} - The IDs of all killed tasks.
  */
-const kill_task = (id = current_task) => {
+const kill_task = (id = exports.current_task) => {
     const task = tasks[id];
     if (task === undefined)
         throw new Error("Invalid task ID");
@@ -175,18 +192,6 @@ const kill_task = (id = current_task) => {
     // task.children.forEach(child => killed.concat(kill_task(child)));
     return killed;
 };
-/**
- * Returns the ID of the current task.
- *
- * @return {Task_ID} - ID of current task.
- */
-const get_task_ID = () => current_task;
-/**
- * Returns the tasks scheduled to run the next tick.
- *
- * @return {Tasks} - Mapping of Tasks by Task_ID.
- */
-const get_tasks = () => tasks;
 /**
  * This function is called when CPU performance is outside of acceptable parameters.
  *
@@ -277,7 +282,7 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
     const execute = (task) => {
         task.starvation_count = 0; // Update before running to avoid looping if function killed by tickLimit
         const { id, task_key, task_args } = task;
-        current_task = id;
+        exports.current_task = id;
         if (Task_Functions[task_key] === undefined) {
             ERROR(`Unknown task function for key: ${task_key}`);
             return -1;
@@ -285,7 +290,7 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
         const ret = Task_Functions[task_key](...task_args);
         if (ret !== 0 /* OK */)
             ERROR(`Task ${task.id} returned nonzero exit code: ${ret}`);
-        current_task = ROOT_TASK_ID;
+        exports.current_task = ROOT_TASK_ID;
         return ret;
     };
     const shutdown_average = stats.shutdown_average || shutdown_cpu_estimate;
@@ -324,12 +329,12 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
                 // Add 2 sigma to both task & shutdown estimates, should cover 99.95% of cases.
                 let max_likely_cost = average_cost + Math.sqrt(task.cost_variance * 2) + Math.sqrt(shutdown_variance * 2);
                 switch (i) {
-                    case 0 /* CRITICAL */:
+                    case exports.PRIORITY.CRITICAL:
                         // Run every tick, regardless of CPU cost.
                         execute(task);
                         queue.shift(); // Remove task id from queue
                         break;
-                    case 1 /* HIGH */:
+                    case exports.PRIORITY.HIGH:
                         // Run only if task is anticipated not to exceed `Game.cpu.tickLimit`.
                         if (max_likely_cost < Game.cpu.tickLimit) {
                             execute(task);
@@ -341,7 +346,7 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
                             continue;
                         }
                         break;
-                    case 2 /* MEDIUM */:
+                    case exports.PRIORITY.MEDIUM:
                         // Run if task is anticipated not to exceed `Game.cpu.limit`,
                         // or anticipated not to exceed `Game.cpu.tickLimit` if `Game.cpu.bucket > bucket_threshold`
                         if (average_cost < Game.cpu.limit ||
@@ -355,7 +360,7 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
                             continue;
                         }
                         break;
-                    case 3 /* LOW */:
+                    case exports.PRIORITY.LOW:
                         // Run only if task is anticipated not to exceed `Game.cpu.limit`.
                         if (average_cost < Game.cpu.limit) {
                             execute(task);
@@ -375,7 +380,7 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
         }
     }
     /** Shutdown **/
-    current_task = ROOT_TASK_ID;
+    exports.current_task = ROOT_TASK_ID;
     // Save kernel state
     if (kernel_alpha > alpha_min)
         stats.alpha = kernel_alpha * alpha_decay;
@@ -399,10 +404,9 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
 };
 const boot_cpu = Game.cpu.getUsed();
 
+exports.tasks = tasks;
 exports.register_task_function = register_task_function;
 exports.create_task = create_task;
 exports.kill_task = kill_task;
-exports.get_task_ID = get_task_ID;
-exports.get_tasks = get_tasks;
 exports.run = run;
 exports.default = run;

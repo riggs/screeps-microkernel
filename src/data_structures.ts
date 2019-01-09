@@ -9,13 +9,11 @@ export interface Kernel_Stats {
     shutdown_variance: number,
 }
 
-export const enum PRIORITY {
+export enum PRIORITY {
     CRITICAL = 0,
     HIGH,
     MEDIUM,
     LOW,
-    // Convenience priority, leave last & do not use.
-    IGNORED
 }
 
 export const enum RETURN_CODE {
