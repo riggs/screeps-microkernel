@@ -221,6 +221,9 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
     log_level: exports.LOG_LEVEL.WARN,
     logger: ((level, message) => console.log(`[${exports.LOG_LEVEL[level]}]`, message)),
 }) => {
+    let boot_cpu = 0;
+    if (reload)
+        boot_cpu = Game.cpu.getUsed();
     /** Startup **/
     // Input Validation
     if (!(alpha_min > 0 || alpha_min < 0.5))
@@ -305,13 +308,9 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
         stats.boot_variance = (1 - kernel_alpha) * (stats.boot_variance + kernel_alpha * delta ** 2);
         DEBUG(`Boot cpu cost: ${boot_cpu}, delta: ${delta}`);
         reload = false;
-        last_cpu = Game.cpu.getUsed();
-        startup_cpu = last_cpu - boot_cpu;
     }
-    else {
-        last_cpu = Game.cpu.getUsed();
-        startup_cpu = last_cpu;
-    }
+    last_cpu = Game.cpu.getUsed();
+    startup_cpu = last_cpu - boot_cpu;
     /** Run Tasks **/
     execute_tasks: {
         let strikes = 0;
@@ -402,7 +401,6 @@ const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, 
     stats.shutdown_average = (stats.shutdown_average || 0) + kernel_alpha * shutdown_delta;
     stats.shutdown_variance = (1 - kernel_alpha) * (stats.shutdown_variance + kernel_alpha * shutdown_delta ** 2);
 };
-const boot_cpu = Game.cpu.getUsed();
 
 exports.tasks = tasks;
 exports.register_task_function = register_task_function;
