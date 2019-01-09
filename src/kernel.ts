@@ -211,7 +211,6 @@ export const kill_task = (id: Task_ID = current_task): Array<Task_ID> => {
     for ( i = task.children.length - 1; i >= 0; i--) {
         killed.concat(kill_task(task.children[i]));
     }
-    // task.children.forEach(child => killed.concat(kill_task(child)));
 
     return killed;
 };
