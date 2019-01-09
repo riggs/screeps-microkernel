@@ -1,0 +1,95 @@
+import { Task, Task_Parameters } from "./data_structures";
+export declare type Logger = (level: LOG_LEVEL, message: string) => void;
+/***********
+ * Exports *
+ ***********/
+export { PRIORITY } from "./data_structures";
+export declare enum LOG_LEVEL {
+    OFF = 0,
+    FATAL = 1,
+    ERROR = 2,
+    WARN = 3,
+    INFO = 4,
+    DEBUG = 5,
+    TRACE = 6
+}
+/**
+ * Register the code object to be run as part of a task. This function should only be called outside of the main
+ * loop, before the kernel is run for the first time.
+ *
+ * @param {Task_Key} key - A unique key used to identify which function to call to run the task. Also used as the
+ * `task_key` value that needs to be passed to `create_task`.
+ * @param {Task} fn - The function that will be run by the task.
+ */
+export declare const register_task_function: ({ key, fn }: {
+    key: string;
+    fn: Task;
+}) => void;
+/**
+ * Create a new task, which will start running next tick.
+ *
+ * @param {PRIORITY} priority - Priority level at which the task will be run.
+ * @param {number} starvation_threshold - Number of ticks that task is allowed to 'starve' before being being
+ * elevated to the next priority level.
+ * @param {number} cost_average - Estimated CPU cost to run the function. Actual CPU cost will be measured and recorded,
+ * but an initial estimate is required. To avoid accidentally hitting cpu.tickLimit, don't underestimate.
+ * @param {Task_Key} task_key - Unique key returned by `register_task_function` for the function to be called to run the
+ * task.
+ * @param {Task_Args} task_args - Array of names or ids for game objects that will be passed to the task function.
+ * @param {Task_ID} [parent] - ID of parent task, if it is different from the caller.
+ * @return {Task_ID} - ID of new task.
+ */
+export declare const create_task: ({ priority, task_key, task_args, starvation_threshold, cost_average, parent, }: Pick<Task_Parameters, "priority" | "task_key" | "task_args" | "starvation_threshold" | "cost_average" | "parent">) => number;
+/**
+ * Kill an existing task. If it hasn't yet run this tick, it won't. Also recursively kills child tasks.
+ *
+ * @param {Task_ID} id - ID of task to kill.
+ * @return {Array<Task_ID>} - The IDs of all killed tasks.
+ */
+export declare const kill_task: (id?: number) => number[];
+/**
+ * Returns the ID of the current task.
+ *
+ * @return {Task_ID} - ID of current task.
+ */
+export declare const get_task_ID: () => number;
+/**
+ * Returns the tasks scheduled to run the next tick.
+ *
+ * @return {Tasks} - Mapping of Tasks by Task_ID.
+ */
+export declare const get_tasks: () => Record<number, Task_Parameters>;
+/**
+ * This function is called when CPU performance is outside of acceptable parameters.
+ *
+ * @callback logger_callback
+ * @param {LOG_LEVEL} level - Log level.
+ * @param {string} message - Message to log.
+ */
+/**
+ * Run the kernel.
+ *
+ * Optional parameters for advanced configuration:
+ * @param {number} [alpha_min] - A minimum value for the alpha parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
+ * @param {number} [alpha_decay] - Decay rate of alpha per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
+ * @param {number} [bucket_threshold] - Minimum bucket level for MEDIUM priority tasks to run if they will exceed
+ * Game.cpu.limit
+ * @param {number} [shutdown_cpu_estimate] - Initial CPU estimate for shutdown kernel process.
+ * @param {number} [sigma_range] - Acceptable range of CPU performance measured in standard deviations from the mean.
+ * @param {LOG_LEVEL} [log_level] - Minimum logging level.
+ * @param {logger_callback} [logger] - Function that is called for logging.
+ */
+export declare const run: ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, sigma_range, log_level, logger }?: {
+    alpha_min: number;
+    alpha_decay: number;
+    bucket_threshold: number;
+    shutdown_cpu_estimate: number;
+    sigma_range: number;
+    log_level: LOG_LEVEL;
+    logger: Logger;
+}) => void;
+/***********
+ * Default *
+ ***********/
+export default run;
+//# sourceMappingURL=kernel.d.ts.map

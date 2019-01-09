@@ -1,0 +1,35 @@
+{
+  "name": "screeps-microkernel",
+  "version": "0.0.0",
+  "description": "Best Damn Screeps Microkernel",
+  "main": "dist/kernel.cjs.js",
+  "module": "kernel.js",
+  "scripts": {
+    "build": "npm run tsc && npm run rollup",
+    "rollup": "rollup -c",
+    "tsc": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/riggs/screeps-microkernel.git"
+  },
+  "keywords": [
+    "screeps"
+  ],
+  "author": "Benjamin Riggs (https://github.com/riggs)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/riggs/screeps-microkernel/issues"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.14.119",
+    "@types/node": "^10.12.18",
+    "@types/screeps": "^2.5.3",
+    "fetiche": "0.0.0",
+    "rollup": "^1.0.2",
+    "ts-node": "^7.0.1",
+    "typescript": "^3.2.2"
+  },
+  "homepage": "https://github.com/riggs/screeps-microkernel#readme"
+}
