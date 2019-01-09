@@ -23,26 +23,6 @@ Be sure to `import * as kernel from 'screeps-microkernel';` / `let kernel = requ
 * Record kernel CPU stats
 * Serialize Memory
 
-## System Calls
-
-##### `register_task_function`
-Registers a code object with the kernel that can be run by one or more tasks.
-
-##### `create_task`
-Adds Task to Task List. Task will not start running until next tick.
-
-If `create_task` is called from within another task, the created task becomes a child of the
-first task. If called from code not being run via the kernel, the task has no parent.
-
-##### `kill_task`
-Stops a task from running in the future. Also stops child tasks.
-
-##### `get_task_ID`
-Returns the ID of the currently running task.
-
-##### `get_tasks`
-Returns the tasks currently scheduled to run, mapped by Task ID.
-
 ## Writing Tasks
 
 #### Task Functions
@@ -92,3 +72,23 @@ These tasks are run only if they are anticipated not to exceed `Game.cpu.limit`.
 Every tick that a task is not able to run due to CPU limits is recorded as being stagnant.
 As a task becomes more stagnant, it will be bumped up to a higher priority level until it
 is able to run.
+
+## System Calls ## FIXME
+
+##### `register_task_function`
+Registers a code object with the kernel that can be run by one or more tasks.
+
+##### `create_task`
+Adds Task to Task List. Task will not start running until next tick.
+
+If `create_task` is called from within another task, the created task becomes a child of the
+first task. If called from code not being run via the kernel, the task has no parent.
+
+##### `kill_task`
+Stops a task from running in the future. Also stops child tasks.
+
+##### `get_task_ID`
+Returns the ID of the currently running task.
+
+##### `get_tasks`
+Returns the tasks currently scheduled to run, mapped by Task ID.

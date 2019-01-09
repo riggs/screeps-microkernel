@@ -2,8 +2,9 @@
   "name": "screeps-microkernel",
   "version": "0.0.0",
   "description": "Best Damn Screeps Microkernel",
-  "main": "dist/kernel.cjs.js",
-  "module": "kernel.js",
+  "main": "./dist/kernel.cjs.js",
+  "module": "./dist/kernel.js",
+  "typings": "./typings/kernel.d.ts",
   "scripts": {
     "build": "npm run tsc && npm run rollup",
     "rollup": "rollup -c",
