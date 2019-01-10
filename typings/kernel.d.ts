@@ -1,4 +1,4 @@
-import { Task, Task_Parameters } from "./data_structures";
+import { Task_Function, Task } from "./data_structures";
 export declare type Logger = (level: LOG_LEVEL, message: string) => void;
 /***********
  * Exports *
@@ -18,7 +18,7 @@ export declare enum LOG_LEVEL {
  *
  * @return {Tasks} - Mapping of Tasks by Task_ID.
  */
-export declare const tasks: Record<number, Task_Parameters>;
+export declare const tasks: Record<number, Task>;
 /**
  * Returns the ID of the current task.
  *
@@ -31,19 +31,19 @@ export declare let current_task: number;
  *
  * @param {Task_Key} key - A unique key used to identify which function to call to run the task. Also used as the
  * `task_key` value that needs to be passed to `create_task`.
- * @param {Task} fn - The function that will be run by the task.
+ * @param {Task_Function} fn - The function that will be run by the task.
  */
 export declare const register_task_function: ({ key, fn }: {
     key: string;
-    fn: Task;
+    fn: Task_Function;
 }) => void;
 /**
  * Create a new task, which will start running next tick.
  *
  * @param {PRIORITY} priority - Priority level at which the task will be run.
- * @param {number} starvation_threshold - Number of ticks that task is allowed to 'starve' before being being
+ * @param {number} patience - Number of ticks that task is allowed to 'starve' before being being
  * elevated to the next priority level.
- * @param {number} cost_average - Estimated CPU cost to run the function. Actual CPU cost will be measured and recorded,
+ * @param {number} cost_μ - Estimated CPU cost to run the function. Actual CPU cost will be measured and recorded,
  * but an initial estimate is required. To avoid accidentally hitting cpu.tickLimit, don't underestimate.
  * @param {Task_Key} task_key - Unique key returned by `register_task_function` for the function to be called to run the
  * task.
@@ -51,7 +51,7 @@ export declare const register_task_function: ({ key, fn }: {
  * @param {Task_ID} [parent] - ID of parent task, if it is different from the caller.
  * @return {Task_ID} - ID of new task.
  */
-export declare const create_task: ({ priority, task_key, task_args, starvation_threshold, cost_average, parent, }: Pick<Task_Parameters, "priority" | "task_key" | "task_args" | "starvation_threshold" | "cost_average" | "parent">) => number;
+export declare const create_task: ({ priority, task_key, task_args, patience, cost_μ, parent, }: Pick<Task, "priority" | "task_key" | "task_args" | "patience" | "cost_μ" | "parent">) => number;
 /**
  * Kill an existing task. If it hasn't yet run this tick, it won't. Also recursively kills child tasks.
  *
@@ -70,8 +70,8 @@ export declare const kill_task: (id?: number) => number[];
  * Run the kernel.
  *
  * Optional parameters for advanced configuration:
- * @param {number} [alpha_min] - A minimum value for the alpha parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
- * @param {number} [alpha_decay] - Decay rate of alpha per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
+ * @param {number} [alpha_min] - A minimum value for the α parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
+ * @param {number} [alpha_decay] - Decay rate of α per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
  * @param {number} [bucket_threshold] - Minimum bucket level for MEDIUM priority tasks to run if they will exceed
  * Game.cpu.limit
  * @param {number} [shutdown_cpu_estimate] - Initial CPU estimate for shutdown kernel process.

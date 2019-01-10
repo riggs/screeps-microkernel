@@ -1,23 +1,23 @@
 
 import {
-    Task,
+    Task_Function,
     PRIORITY,
     Task_ID,
-    Task_Parameters,
+    Task,
     Task_Key,
     Kernel_Data,
-    RETURN_CODE,
     Tasks,
 } from "./data_structures";
 
-const DEFAULT_ALPHA_MIN = 0.02; // Last 100 ticks have ~85% influence on EMA, aka '100-day EMA'.
-const DEFAULT_ALPHA_DECAY = 0.8; // Rate at which alpha decays from 0.5 to alpha_min each tick. Increase if high CPU
+const DEFAULT_α_MIN = 0.02; // Last 100 ticks have ~85% influence on EMA, aka '100-day EMA'.
+const DEFAULT_α_DECAY = 0.8; // Rate at which α decays from 0.5 to alpha_min each tick. Increase if high CPU
 // costs when relaunching are negatively impacting CPU estimates later on.
 const TASK_COUNT_LIMIT = 2**16;   // In anticipation of compact binary serialization.
-const DEFAULT_BUCKET_THRESHOLD = 5000;  // Half full
+const DEFAULT_BUCKET_THRESHOLD = 9000;  // 90% full
 const DEFAULT_SHUTDOWN_CPU_ESTIMATE = 0.5;
 const DEFAULT_SIGMA_RANGE = 3;  // CPU costs more than 3 std. deviations from their mean (~0.1%) will be logged.
 const ROOT_TASK_ID = 0;
+const RETURN_CODE_OK = 0;
 
 // tasks, queues, current_task, max_task_id, & empty_task_IDs need to be available to create/kill_tasks and kernel core.
 const PRIORITY_COUNT = PRIORITY.LOW + 1;
@@ -33,13 +33,13 @@ const memory = global.Memory;
 const kernel: Kernel_Data = memory.kernel === undefined
     ? memory.kernel = {
         stats: {
-            alpha: 0.5,
-            boot_average: undefined,
-            boot_variance: 0,
-            startup_average: undefined,
-            startup_variance: 0,
-            shutdown_average: undefined,
-            shutdown_variance: 0,
+            α: 0.5,
+            boot_μ: undefined,
+            boot_σ2: 0,
+            startup_μ: undefined,
+            startup_σ2: 0,
+            shutdown_μ: undefined,
+            shutdown_σ2: 0,
         },
         tasks: {},
         queues: [],
@@ -79,7 +79,7 @@ const logger_factory = (log_level: LOG_LEVEL, logger: Logger) => {
     }
 };
 
-const Task_Functions: Record<Task_Key, Task> = {};
+const Task_Functions: Record<Task_Key, Task_Function> = {};
 
 /***********
  * Exports *
@@ -116,9 +116,9 @@ export let current_task: number = ROOT_TASK_ID;
  *
  * @param {Task_Key} key - A unique key used to identify which function to call to run the task. Also used as the
  * `task_key` value that needs to be passed to `create_task`.
- * @param {Task} fn - The function that will be run by the task.
+ * @param {Task_Function} fn - The function that will be run by the task.
  */
-export const register_task_function = ({key, fn}: {key: Task_Key, fn: Task}) => {
+export const register_task_function = ({key, fn}: {key: Task_Key, fn: Task_Function}) => {
     if ( Task_Functions[key] !== undefined && Task_Functions[key] !== fn ) {
         throw new Error(`Task key used for multiple task functions: ${key}`)
     }
@@ -129,9 +129,9 @@ export const register_task_function = ({key, fn}: {key: Task_Key, fn: Task}) => 
  * Create a new task, which will start running next tick.
  *
  * @param {PRIORITY} priority - Priority level at which the task will be run.
- * @param {number} starvation_threshold - Number of ticks that task is allowed to 'starve' before being being
+ * @param {number} patience - Number of ticks that task is allowed to 'starve' before being being
  * elevated to the next priority level.
- * @param {number} cost_average - Estimated CPU cost to run the function. Actual CPU cost will be measured and recorded,
+ * @param {number} cost_μ - Estimated CPU cost to run the function. Actual CPU cost will be measured and recorded,
  * but an initial estimate is required. To avoid accidentally hitting cpu.tickLimit, don't underestimate.
  * @param {Task_Key} task_key - Unique key returned by `register_task_function` for the function to be called to run the
  * task.
@@ -140,8 +140,8 @@ export const register_task_function = ({key, fn}: {key: Task_Key, fn: Task}) => 
  * @return {Task_ID} - ID of new task.
  */
 export const create_task = (
-    { priority, task_key, task_args, starvation_threshold, cost_average, parent, }:
-        Pick<Task_Parameters, | "priority" | "task_key" | "task_args" | "starvation_threshold" | "cost_average" | "parent" >
+    { priority, task_key, task_args, patience, cost_μ, parent, }:
+        Pick<Task, | "priority" | "task_key" | "task_args" | "patience" | "cost_μ" | "parent" >
 ): Task_ID => {
     if ( parent !== undefined && ( tasks[parent] === undefined || tasks[parent].alive === false )) {
         throw new Error(`Invalid parent task ID: ${parent}`);
@@ -167,15 +167,15 @@ export const create_task = (
     tasks[id] = {
         id,
         priority,
-        starvation_threshold,
-        cost_average,
-        cost_variance: 0,
+        patience,
+        cost_μ,
+        cost_σ2: 0,
         task_key,
         task_args,
         parent,
         children: [],
-        alpha: 0.5,
-        starvation_count: 0,
+        α: 0.5,
+        skips: 0,
         alive: true,
     };
 
@@ -227,8 +227,8 @@ export const kill_task = (id: Task_ID = current_task): Array<Task_ID> => {
  * Run the kernel.
  *
  * Optional parameters for advanced configuration:
- * @param {number} [alpha_min] - A minimum value for the alpha parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
- * @param {number} [alpha_decay] - Decay rate of alpha per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
+ * @param {number} [alpha_min] - A minimum value for the α parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
+ * @param {number} [alpha_decay] - Decay rate of α per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
  * @param {number} [bucket_threshold] - Minimum bucket level for MEDIUM priority tasks to run if they will exceed
  * Game.cpu.limit
  * @param {number} [shutdown_cpu_estimate] - Initial CPU estimate for shutdown kernel process.
@@ -237,8 +237,8 @@ export const kill_task = (id: Task_ID = current_task): Array<Task_ID> => {
  * @param {logger_callback} [logger] - Function that is called for logging.
  */
 export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, sigma_range, log_level, logger } = {
-    alpha_min: DEFAULT_ALPHA_MIN,
-    alpha_decay: DEFAULT_ALPHA_DECAY,
+    alpha_min: DEFAULT_α_MIN,
+    alpha_decay: DEFAULT_α_DECAY,
     bucket_threshold: DEFAULT_BUCKET_THRESHOLD,
     shutdown_cpu_estimate: DEFAULT_SHUTDOWN_CPU_ESTIMATE,
     sigma_range: DEFAULT_SIGMA_RANGE,
@@ -246,7 +246,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     logger: ((level, message) => console.log(`[${LOG_LEVEL[level]}]`, message)) as Logger,
 }) => {
     let boot_cpu = 0;
-    if ( reload ) boot_cpu = Game.cpu.getUsed();
+    if ( reload ) boot_cpu = global.kernel_last_boot_cpu = Game.cpu.getUsed();
     /** Startup **/
     // Input Validation
     if ( !( alpha_min > 0 || alpha_min < 0.5 ) ) throw new Error("Invalid alpha_min parameter");
@@ -265,14 +265,14 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
         TRACE,  // On it's own line so I can easily remove every trace of TRACE.
     } = logger_factory(log_level, logger);
 
-    // Update starvation_count, elevate tasks as appropriate.
+    // Update skips, elevate tasks as appropriate.
     for ( i = 1; i < queues.length ; i++ ) {    // Skip CRITICAL queue since it can't be elevated
         const queue = queues[i];
         for ( j = 0; j < queue.length; j++ ) {
             const id = queue[j];
             const task = tasks[id];
-            task.starvation_count++;
-            if ( task.starvation_count % task.starvation_threshold === 0) {
+            task.skips++;
+            if ( task.skips % task.patience === 0) {
                 queue.splice(j, 1); // Returns id
                 queues[i - 1].push(id);
                 INFO(`Elevating task ${id}`);
@@ -287,7 +287,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
             empty_task_ids.add(i);
             continue;
         }
-        if ( task.starvation_count !== 0 ) continue;   // Already in queue somewhere.
+        if ( task.skips !== 0 ) continue;   // Already in queue somewhere.
         let { priority } = task;
         queues[priority].push(i);
     }
@@ -296,26 +296,26 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
      * Calculate and update exponential moving average and variance for task CPU cost.
      *
      * @param {number} cpu - CPU cost of task this tick
-     * @param {Task_Parameters} task - Parameters that define task, including stats.
+     * @param {Task} task - Parameters that define task, including stats.
      */
     const update_statistics = ( // Defined here because it relies on scope defined inside of `run`.
         cpu: number,
-        task: Task_Parameters,
+        task: Task,
     ) => {
-        let { id, cost_average, cost_variance, alpha } = task;
+        let { id, cost_μ, cost_σ2, α } = task;
         // Straight outta https://en.wikipedia.org/wiki/Moving_average#Exponentially_weighted_moving_variance_and_standard_deviation
-        const delta = cpu - cost_average;
-        cost_average = cost_average + alpha * delta;
-        cost_variance = ( 1 - alpha ) * ( cost_variance + alpha * delta ** 2 );
-        if ( alpha > alpha_min ) alpha = alpha * alpha_decay;  // Update alpha for next tick.
+        const δ = cpu - cost_μ;
+        cost_μ = cost_μ + α * δ;
+        cost_σ2 = ( 1 - α ) * ( cost_σ2 + α * δ ** 2 );
+        if ( α > alpha_min ) α = α * alpha_decay;  // Update α for next tick.
         // Via https://en.wikipedia.org/wiki/Standard_score
-        const sigma = delta / Math.sqrt(cost_variance);
-        if ( Math.abs(sigma) > sigma_range ) WARN(`Task ${id} had abnormal CPU cost: ${cpu}`);
-        Object.assign(task, { cost_average, cost_variance, alpha }); // Update stats on task object.
+        const σ = δ / Math.sqrt(cost_σ2);
+        if ( Math.abs(σ) > sigma_range ) WARN(`Task ${id} had abnormal CPU cost: ${cpu}`);
+        Object.assign(task, { cost_μ, cost_σ2, α }); // Update stats on task object.
     };
 
-    const execute = (task: Task_Parameters): number => {
-        task.starvation_count = 0;  // Update before running to avoid looping if function killed by tickLimit
+    const execute = (task: Task): number => {
+        task.skips = 0;  // Update before running to avoid looping if function killed by tickLimit
         const { id, task_key, task_args } = task;
         current_task = id;
         if ( Task_Functions[task_key] === undefined ) {
@@ -323,26 +323,26 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
             return -1
         }
         const ret = Task_Functions[task_key](...task_args);
-        if ( ret !== RETURN_CODE.OK ) ERROR(`Task ${task.id} returned nonzero exit code: ${ret}`);
+        if ( ret !== RETURN_CODE_OK ) ERROR(`Task ${task.id} returned nonzero exit code: ${ret}`);
         current_task = ROOT_TASK_ID;
         return ret
     };
 
-    const shutdown_average = stats.shutdown_average || shutdown_cpu_estimate;
-    const shutdown_variance = stats.shutdown_variance;
-    const kernel_alpha = stats.alpha || 0.5;
+    const shutdown_μ = stats.shutdown_μ === undefined ? shutdown_cpu_estimate : stats.shutdown_μ;
+    const shutdown_σ2 = stats.shutdown_σ2;
+    const kernel_α = stats.α;
     let startup_cpu;
     let last_cpu;
     if ( reload ) {
-        const boot_average = stats.boot_average || boot_cpu;
-        const delta = boot_cpu - boot_average;
-        stats.boot_average = boot_average + kernel_alpha * delta;
-        stats.boot_variance = ( 1 - kernel_alpha ) * ( stats.boot_variance + kernel_alpha * delta ** 2 );
-        DEBUG(`Boot cpu cost: ${boot_cpu}, delta: ${delta}`);
+        const boot_average = stats.boot_μ || boot_cpu;
+        const δ = boot_cpu - boot_average;
+        stats.boot_μ = boot_average + kernel_α * δ;
+        stats.boot_σ2 = ( 1 - kernel_α ) * ( stats.boot_σ2 + kernel_α * δ ** 2 );
+        DEBUG(`Boot cpu cost: ${boot_cpu}, δ: ${δ}`);
         reload = false;
     }
     last_cpu = Game.cpu.getUsed();
-    startup_cpu = last_cpu - boot_cpu;
+    startup_cpu = global.kernel_last_startup_cpu = last_cpu - boot_cpu;
 
     /** Run Tasks **/
     execute_tasks: {
@@ -356,9 +356,9 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                     queue.shift();
                     continue;
                 }
-                let average_cost = task.cost_average + last_cpu + shutdown_average;
+                let average_cost = task.cost_μ + last_cpu + shutdown_μ;
                 // Add 2 sigma to both task & shutdown estimates, should cover 99.95% of cases.
-                let max_likely_cost = average_cost + Math.sqrt(task.cost_variance * 2) + Math.sqrt(shutdown_variance * 2);
+                let max_likely_cost = average_cost + Math.sqrt(task.cost_σ2 * 2) + Math.sqrt(shutdown_σ2 * 2);
                 switch ( i ) {
                     case PRIORITY.CRITICAL:
                         // Run every tick, regardless of CPU cost.
@@ -412,10 +412,10 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     /** Shutdown **/
     current_task = ROOT_TASK_ID;
     // Save kernel state
-    if ( kernel_alpha > alpha_min ) stats.alpha = kernel_alpha * alpha_decay;
-    const startup_delta = startup_cpu - ( stats.startup_average || startup_cpu );
-    stats.startup_average = ( stats.startup_average || startup_cpu ) + kernel_alpha * startup_delta;
-    stats.startup_variance = ( 1 - kernel_alpha ) * ( stats.startup_variance + kernel_alpha * startup_delta ** 2 );
+    if ( kernel_α > alpha_min ) stats.α = kernel_α * alpha_decay;
+    const startup_delta = startup_cpu - ( stats.startup_μ === undefined ? startup_cpu : stats.startup_μ );
+    stats.startup_μ = ( stats.startup_μ === undefined ? startup_cpu : stats.startup_μ ) + kernel_α * startup_delta;
+    stats.startup_σ2 = ( 1 - kernel_α ) * ( stats.startup_σ2 + kernel_α * startup_delta ** 2 );
     kernel.stats = stats;
     kernel.queues = queues;
     kernel.tasks = tasks;
@@ -426,11 +426,11 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     RawMemory.set(JSON.stringify(memory));  // TODO: Binary => Base<2^15> Serialization
     // Store the final shutdown CPU cost in cache after memory has been serialized.
     // Will occasionally loose 1 tick of data here, an acceptable trade-off for recording serialization costs.
-    const shutdown_cpu = Game.cpu.getUsed() - last_cpu;
+    const shutdown_cpu = global.kernel_last_shutdown_cpu = ( global.kernel_last_tick_cpu = Game.cpu.getUsed() ) - last_cpu;
     DEBUG(`Shutdown CPU cost: ${shutdown_cpu}`);
-    const shutdown_delta = shutdown_cpu - ( stats.shutdown_average || shutdown_cpu );
-    stats.shutdown_average = ( stats.shutdown_average || 0 ) + kernel_alpha * shutdown_delta;
-    stats.shutdown_variance = ( 1 - kernel_alpha ) * ( stats.shutdown_variance + kernel_alpha * shutdown_delta ** 2 );
+    const shutdown_delta = shutdown_cpu - ( stats.shutdown_μ === undefined ? shutdown_cpu : stats.shutdown_μ );
+    stats.shutdown_μ = ( stats.shutdown_μ === undefined ? 0 : stats.shutdown_μ ) + kernel_α * shutdown_delta;
+    stats.shutdown_σ2 = ( 1 - kernel_α ) * ( stats.shutdown_σ2 + kernel_α * shutdown_delta ** 2 );
 };
 
 /***********

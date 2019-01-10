@@ -1,14 +1,4 @@
 
-export interface Kernel_Stats {
-    alpha: number,
-    boot_average: number | undefined,
-    boot_variance: number,
-    startup_average: number | undefined,
-    startup_variance: number,
-    shutdown_average: number | undefined,
-    shutdown_variance: number,
-}
-
 export enum PRIORITY {
     CRITICAL = 0,
     HIGH,
@@ -16,36 +6,32 @@ export enum PRIORITY {
     LOW,
 }
 
-export const enum RETURN_CODE {
-    OK = 0,
-}
-
 export type Object_ID = string | number;
 
 export type Task_Args = Array<Object_ID>;
 
-export type Task = (...args: Task_Args) => number;
+export type Task_Function = (...args: Task_Args) => number;
 
 export type Task_Key = string;
 
 export type Task_ID = number;
 
-export type Task_Parameters = {
+export type Task = {
     id: Task_ID,
     priority: PRIORITY,
     task_key: Task_Key,
-    starvation_threshold: number,
-    cost_average: number,
-    cost_variance: number,
+    patience: number,
+    cost_μ: number,
+    cost_σ2: number,
     task_args: Task_Args,
     parent?: Task_ID,
     children: Array<Task_ID>,
-    alpha: number,
-    starvation_count: number,
+    α: number,
+    skips: number,
     alive: boolean,
 };
 
-export type Tasks = Record<Task_ID, Task_Parameters>;
+export type Tasks = Record<Task_ID, Task>;
 
 /**
  * Multilevel Priority Queues. Each Queue corresponds to a PRIORITY level. Lower priorities are run first.
@@ -54,23 +40,37 @@ export type Tasks = Record<Task_ID, Task_Parameters>;
  */
 export type Queues = Array<Array<Task_ID>>;
 
+export interface Kernel_Stats {
+    α: number;
+    boot_μ: number | undefined;
+    boot_σ2: number;
+    startup_μ: number | undefined;
+    startup_σ2: number;
+    shutdown_μ: number | undefined;
+    shutdown_σ2: number;
+}
+
 export interface Kernel_Data {
-    stats: Kernel_Stats,
-    tasks: Tasks,
-    queues: Queues,
-    max_task_id: number,
-    empty_task_ids: Set<Task_ID>,
+    stats: Kernel_Stats;
+    tasks: Tasks;
+    queues: Queues;
+    max_task_id: number;
+    empty_task_ids: Set<Task_ID>;
 }
 
 declare global {
 
     interface Memory {
-        kernel?: Kernel_Data,
+        kernel?: Kernel_Data;
     }
 
     namespace NodeJS {
         interface Global {
-            Memory: Memory,
+            Memory: Memory;
+            kernel_last_startup_cpu: number;
+            kernel_last_shutdown_cpu: number;
+            kernel_last_boot_cpu: number;
+            kernel_last_tick_cpu: number;
         }
     }
     type _ = typeof _
