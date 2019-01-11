@@ -38,7 +38,7 @@ export declare const register_task_function: ({ key, fn }: {
     fn: Task_Function;
 }) => void;
 /**
- * Create a new task, which will start running next tick.
+ * Create a new task, which will be queued immediately.
  *
  * @param {PRIORITY} priority - Priority level at which the task will be run.
  * @param {number} patience - Number of ticks that task is allowed to 'starve' before being being

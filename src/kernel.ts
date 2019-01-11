@@ -18,6 +18,7 @@ const DEFAULT_SHUTDOWN_CPU_ESTIMATE = 0.5;
 const DEFAULT_SIGMA_RANGE = 3;  // CPU costs more than 3 std. deviations from their mean (~0.1%) will be logged.
 const ROOT_TASK_ID = 0;
 const RETURN_CODE_OK = 0;
+const RETURN_CODE_ERROR = Symbol('Code Error');
 
 // tasks, queues, current_task, max_task_id, & empty_task_IDs need to be available to create/kill_tasks and kernel core.
 const PRIORITY_COUNT = PRIORITY.LOW + 1;
@@ -126,7 +127,7 @@ export const register_task_function = ({key, fn}: {key: Task_Key, fn: Task_Funct
 };
 
 /**
- * Create a new task, which will start running next tick.
+ * Create a new task, which will be queued immediately.
  *
  * @param {PRIORITY} priority - Priority level at which the task will be run.
  * @param {number} patience - Number of ticks that task is allowed to 'starve' before being being
@@ -178,6 +179,8 @@ export const create_task = (
         skips: 0,
         alive: true,
     };
+
+    // FIXME: Add task to queue
 
     return id;
 };
@@ -314,16 +317,21 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
         Object.assign(task, { cost_μ, cost_σ2, α }); // Update stats on task object.
     };
 
-    const execute = (task: Task): number => {
+    const execute = (task: Task): number | symbol => {
         task.skips = 0;  // Update before running to avoid looping if function killed by tickLimit
         const { id, task_key, task_args } = task;
         current_task = id;
         if ( Task_Functions[task_key] === undefined ) {
             ERROR(`Unknown task function for key: ${task_key}`);
-            return -1
+            return RETURN_CODE_ERROR
         }
-        const ret = Task_Functions[task_key](...task_args);
-        if ( ret !== RETURN_CODE_OK ) ERROR(`Task ${task.id} returned nonzero exit code: ${ret}`);
+        let ret: symbol | number = RETURN_CODE_ERROR;
+        try {
+            ret = Task_Functions[task_key](...task_args);
+            if ( ret !== RETURN_CODE_OK ) ERROR(`Task ${task.id} returned nonzero exit code: ${ret}`);
+        } catch ( e ) {
+            ERROR(`Task ${task.id} threw ${e.name}: ${e}`);
+        }
         current_task = ROOT_TASK_ID;
         return ret
     };
@@ -347,6 +355,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     /** Run Tasks **/
     execute_tasks: {
         let strikes = 0;
+        // FIXME: Re-iterate from the top after every task to catch any newly-added tasks at higher priorities
         for ( i = 0; i < queues.length; i++ ) { // Don't use for...of because `i` is needed below.
             let queue = queues[i];
             while ( queue.length > 0 ) {
@@ -359,16 +368,17 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                 let average_cost = task.cost_μ + last_cpu + shutdown_μ;
                 // Add 2 sigma to both task & shutdown estimates, should cover 99.95% of cases.
                 let max_likely_cost = average_cost + Math.sqrt(task.cost_σ2 * 2) + Math.sqrt(shutdown_σ2 * 2);
+                let ret: symbol | number = RETURN_CODE_ERROR;
                 switch ( i ) {
                     case PRIORITY.CRITICAL:
                         // Run every tick, regardless of CPU cost.
-                        execute(task);
+                        ret = execute(task);
                         queue.shift();  // Remove task id from queue
                         break;
                     case PRIORITY.HIGH:
                         // Run only if task is anticipated not to exceed `Game.cpu.tickLimit`.
                         if ( max_likely_cost < Game.cpu.tickLimit ) {
-                            execute(task);
+                            ret = execute(task);
                             queue.shift();  // Remove task id from queue
                         } else {
                             strikes++;
@@ -382,7 +392,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                         if ( average_cost < Game.cpu.limit ||
                              ( max_likely_cost < Game.cpu.tickLimit && Game.cpu.bucket > bucket_threshold )
                         ) {
-                            execute(task);
+                            ret = execute(task);
                             queue.shift();  // Remove task id from queue
                         } else {
                             strikes++;
@@ -393,7 +403,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                     case PRIORITY.LOW:
                         // Run only if task is anticipated not to exceed `Game.cpu.limit`.
                         if ( average_cost < Game.cpu.limit ) {
-                            execute(task);
+                            ret = execute(task);
                             queue.shift();  // Remove task id from queue
                         } else {
                             strikes++;
@@ -403,7 +413,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                         break;
                 }
                 let task_cpu = Game.cpu.getUsed();
-                update_statistics(task_cpu - last_cpu, task);
+                if ( ret !== RETURN_CODE_ERROR) update_statistics(task_cpu - last_cpu, task);
                 last_cpu = task_cpu;
             }
         }
