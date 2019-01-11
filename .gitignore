@@ -296,3 +296,6 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# Symlink for testing
+test/kernel.bundle.cjs.js

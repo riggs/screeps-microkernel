@@ -2,6 +2,7 @@
 import {
     Task_Function,
     PRIORITY,
+    PRIORITY_COUNT,
     Task_ID,
     Task,
     Task_Key,
@@ -20,9 +21,6 @@ const ROOT_TASK_ID = 0;
 const RETURN_CODE_OK = 0;
 const RETURN_CODE_ERROR = Symbol('Code Error');
 
-// tasks, queues, current_task, max_task_id, & empty_task_IDs need to be available to create/kill_tasks and kernel core.
-const PRIORITY_COUNT = PRIORITY.LOW + 1;
-let i, j;
 let raw_memory = RawMemory.get();
 delete global.Memory;
 if ( raw_memory.length === 0 ) {
@@ -45,16 +43,19 @@ const kernel: Kernel_Data = memory.kernel === undefined
         tasks: {},
         queues: [],
         max_task_id: ROOT_TASK_ID,
-        empty_task_ids: new Set<Task_ID>(),
+        unused_ids: [],
     }
     : memory.kernel;
-const { stats, queues, empty_task_ids } = kernel;
+const { stats, queues, unused_ids } = kernel;
+const empty_task_ids = new Set<Task_ID>(unused_ids);
 
 if ( queues.length !== PRIORITY_COUNT ) {
-    for ( i = queues.length; i < PRIORITY_COUNT; i++ ) {
+    for ( let i = queues.length; i < PRIORITY_COUNT; i++ ) {
         queues.push([]);
     }
 }
+
+let min_task_priority = PRIORITY.LOW;
 
 let { max_task_id } = kernel;   // Removes need to iterate over all task id space.
 
@@ -127,7 +128,7 @@ export const register_task_function = ({key, fn}: {key: Task_Key, fn: Task_Funct
 };
 
 /**
- * Create a new task, which will be queued immediately.
+ * Create a new task, which will be queued immediately (unless called after the kernel has executed).
  *
  * @param {PRIORITY} priority - Priority level at which the task will be run.
  * @param {number} patience - Number of ticks that task is allowed to 'starve' before being being
@@ -180,7 +181,14 @@ export const create_task = (
         alive: true,
     };
 
-    // FIXME: Add task to queue
+    // Add to queue if this function was called by another, currently-executing task.
+    // If current_task is ROOT_TASK_ID, then this function was called before or after the kernel ran, so don't add
+    // it to one of the queues as the kernel will do that on its next run.
+    if ( current_task !== ROOT_TASK_ID ) {
+        queues[priority].push(id);
+        // Ensure this function gets called even if priority queue was empty.
+        if ( priority < min_task_priority ) min_task_priority = priority;
+    }
 
     return id;
 };
@@ -211,7 +219,7 @@ export const kill_task = (id: Task_ID = current_task): Array<Task_ID> => {
     }
 
     // Recursively kill child tasks, iterate backwards to help minimize size of empty_task_IDs
-    for ( i = task.children.length - 1; i >= 0; i--) {
+    for ( let i = task.children.length - 1; i >= 0; i--) {
         killed.concat(kill_task(task.children[i]));
     }
 
@@ -239,15 +247,15 @@ export const kill_task = (id: Task_ID = current_task): Array<Task_ID> => {
  * @param {LOG_LEVEL} [log_level] - Minimum logging level.
  * @param {logger_callback} [logger] - Function that is called for logging.
  */
-export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, sigma_range, log_level, logger } = {
-    alpha_min: DEFAULT_α_MIN,
-    alpha_decay: DEFAULT_α_DECAY,
-    bucket_threshold: DEFAULT_BUCKET_THRESHOLD,
-    shutdown_cpu_estimate: DEFAULT_SHUTDOWN_CPU_ESTIMATE,
-    sigma_range: DEFAULT_SIGMA_RANGE,
-    log_level: LOG_LEVEL.WARN,
-    logger: ((level, message) => console.log(`[${LOG_LEVEL[level]}]`, message)) as Logger,
-}) => {
+export const run = ({
+        alpha_min = DEFAULT_α_MIN,
+        alpha_decay = DEFAULT_α_DECAY,
+        bucket_threshold = DEFAULT_BUCKET_THRESHOLD,
+        shutdown_cpu_estimate = DEFAULT_SHUTDOWN_CPU_ESTIMATE,
+        sigma_range = DEFAULT_SIGMA_RANGE,
+        log_level = LOG_LEVEL.WARN,
+        logger = ( (level, message) => console.log(`[${LOG_LEVEL[level]}]`, message) ) as Logger
+    }) => {
     let boot_cpu = 0;
     if ( reload ) boot_cpu = global.kernel_last_boot_cpu = Game.cpu.getUsed();
     /** Startup **/
@@ -269,9 +277,9 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     } = logger_factory(log_level, logger);
 
     // Update skips, elevate tasks as appropriate.
-    for ( i = 1; i < queues.length ; i++ ) {    // Skip CRITICAL queue since it can't be elevated
+    for ( let i = 1; i < queues.length ; i++ ) {    // Skip CRITICAL queue since it can't be elevated
         const queue = queues[i];
-        for ( j = 0; j < queue.length; j++ ) {
+        for ( let j = 0; j < queue.length; j++ ) {
             const id = queue[j];
             const task = tasks[id];
             task.skips++;
@@ -284,7 +292,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     }
 
     // Populate queues based on tasks
-    for ( i = 1; i <= max_task_id; i++ ) {
+    for ( let i = 1; i <= max_task_id; i++ ) {
         let task = tasks[i];
         if ( task === undefined || task.alive === false ) {
             empty_task_ids.add(i);
@@ -355,9 +363,9 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     /** Run Tasks **/
     execute_tasks: {
         let strikes = 0;
-        // FIXME: Re-iterate from the top after every task to catch any newly-added tasks at higher priorities
-        for ( i = 0; i < queues.length; i++ ) { // Don't use for...of because `i` is needed below.
+        for ( let i = 0; i < queues.length; i++ ) { // Don't use for...of because `i` is needed below.
             let queue = queues[i];
+            min_task_priority = i;
             while ( queue.length > 0 ) {
                 if ( strikes > 2 ) break execute_tasks; // After 3 scheduling fails, stop trying
                 let task = tasks[queue[0]];
@@ -372,8 +380,8 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                 switch ( i ) {
                     case PRIORITY.CRITICAL:
                         // Run every tick, regardless of CPU cost.
-                        ret = execute(task);
                         queue.shift();  // Remove task id from queue
+                        ret = execute(task);
                         break;
                     case PRIORITY.HIGH:
                         // Run only if task is anticipated not to exceed `Game.cpu.tickLimit`.
@@ -392,8 +400,8 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                         if ( average_cost < Game.cpu.limit ||
                              ( max_likely_cost < Game.cpu.tickLimit && Game.cpu.bucket > bucket_threshold )
                         ) {
-                            ret = execute(task);
                             queue.shift();  // Remove task id from queue
+                            ret = execute(task);
                         } else {
                             strikes++;
                             queue.push(queue.shift()!);  // Move task id to back of queue
@@ -403,8 +411,8 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                     case PRIORITY.LOW:
                         // Run only if task is anticipated not to exceed `Game.cpu.limit`.
                         if ( average_cost < Game.cpu.limit ) {
-                            ret = execute(task);
                             queue.shift();  // Remove task id from queue
+                            ret = execute(task);
                         } else {
                             strikes++;
                             queue.push(queue.shift()!);  // Move task id to back of queue
@@ -415,6 +423,12 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
                 let task_cpu = Game.cpu.getUsed();
                 if ( ret !== RETURN_CODE_ERROR) update_statistics(task_cpu - last_cpu, task);
                 last_cpu = task_cpu;
+                // Check to see if any additional tasks with 'higher' priority were scheduled.
+                if ( min_task_priority < i ) {
+                    // 'i' is incremented at end of 'for' loop, after breaking this loop, thus subtract 1 to compensate
+                    i = min_task_priority - 1;
+                    break;
+                }
             }
         }
     }
@@ -430,7 +444,7 @@ export const run = ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_est
     kernel.queues = queues;
     kernel.tasks = tasks;
     kernel.max_task_id = max_task_id;
-    kernel.empty_task_ids = empty_task_ids;
+    kernel.unused_ids = Array.from(empty_task_ids);
     memory.kernel = kernel;
 
     RawMemory.set(JSON.stringify(memory));  // TODO: Binary => Base<2^15> Serialization

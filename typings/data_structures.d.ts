@@ -5,6 +5,7 @@ export declare enum PRIORITY {
     MEDIUM = 2,
     LOW = 3
 }
+export declare const PRIORITY_COUNT: number;
 export declare type Object_ID = string | number;
 export declare type Task_Args = Array<Object_ID>;
 export declare type Task_Function = (...args: Task_Args) => number;
@@ -45,7 +46,7 @@ export interface Kernel_Data {
     tasks: Tasks;
     queues: Queues;
     max_task_id: number;
-    empty_task_ids: Set<Task_ID>;
+    unused_ids: Array<Task_ID>;
 }
 declare global {
     interface Memory {

@@ -5,4 +5,5 @@ export var PRIORITY;
     PRIORITY[PRIORITY["MEDIUM"] = 2] = "MEDIUM";
     PRIORITY[PRIORITY["LOW"] = 3] = "LOW";
 })(PRIORITY || (PRIORITY = {}));
+export const PRIORITY_COUNT = PRIORITY.LOW + 1;
 //# sourceMappingURL=data_structures.js.map

@@ -38,7 +38,7 @@ export declare const register_task_function: ({ key, fn }: {
     fn: Task_Function;
 }) => void;
 /**
- * Create a new task, which will be queued immediately.
+ * Create a new task, which will be queued immediately (unless called after the kernel has executed).
  *
  * @param {PRIORITY} priority - Priority level at which the task will be run.
  * @param {number} patience - Number of ticks that task is allowed to 'starve' before being being
@@ -79,14 +79,14 @@ export declare const kill_task: (id?: number) => number[];
  * @param {LOG_LEVEL} [log_level] - Minimum logging level.
  * @param {logger_callback} [logger] - Function that is called for logging.
  */
-export declare const run: ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, sigma_range, log_level, logger }?: {
-    alpha_min: number;
-    alpha_decay: number;
-    bucket_threshold: number;
-    shutdown_cpu_estimate: number;
-    sigma_range: number;
-    log_level: LOG_LEVEL;
-    logger: Logger;
+export declare const run: ({ alpha_min, alpha_decay, bucket_threshold, shutdown_cpu_estimate, sigma_range, log_level, logger }: {
+    alpha_min?: number | undefined;
+    alpha_decay?: number | undefined;
+    bucket_threshold?: number | undefined;
+    shutdown_cpu_estimate?: number | undefined;
+    sigma_range?: number | undefined;
+    log_level?: LOG_LEVEL | undefined;
+    logger?: Logger | undefined;
 }) => void;
 /***********
  * Default *
