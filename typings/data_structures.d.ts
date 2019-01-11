@@ -23,7 +23,6 @@ export declare type Task = {
     children: Array<Task_ID>;
     α: number;
     skips: number;
-    alive: boolean;
 };
 export declare type Tasks = Record<Task_ID, Task>;
 /**

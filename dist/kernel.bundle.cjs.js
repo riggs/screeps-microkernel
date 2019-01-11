@@ -124,7 +124,7 @@ const register_task_function = ({ key, fn }) => {
  * @return {Task_ID} - ID of new task.
  */
 const create_task = ({ priority, task_key, task_args, patience, cost_μ, parent, }) => {
-    if (parent !== undefined && (tasks[parent] === undefined || tasks[parent].alive === false)) {
+    if (parent !== undefined && (tasks[parent] === undefined)) {
         throw new Error(`Invalid parent task ID: ${parent}`);
     }
     let id;
@@ -157,7 +157,6 @@ const create_task = ({ priority, task_key, task_args, patience, cost_μ, parent,
         children: [],
         α: 0.5,
         skips: 0,
-        alive: true,
     };
     // Add to queue if this function was called by another, currently-executing task.
     // If current_task is ROOT_TASK_ID, then this function was called before or after the kernel ran, so don't add
@@ -181,7 +180,6 @@ const kill_task = (id = exports.current_task) => {
     if (task === undefined)
         throw new Error("Invalid task ID");
     const killed = [id,];
-    task.alive = false;
     // Remove from parent task's list of children
     if (task.parent !== undefined) {
         const siblings = tasks[task.parent].children;
@@ -200,6 +198,8 @@ const kill_task = (id = exports.current_task) => {
     for (let i = task.children.length - 1; i >= 0; i--) {
         killed.concat(kill_task(task.children[i]));
     }
+    // Remove task object from task list
+    delete tasks[id];
     return killed;
 };
 /**
@@ -243,6 +243,10 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
         for (let j = 0; j < queue.length; j++) {
             const id = queue[j];
             const task = tasks[id];
+            if (task === undefined) { // Prune dead tasks.
+                queue.splice(j, 1);
+                continue;
+            }
             task.skips++;
             if (task.skips % task.patience === 0) {
                 queue.splice(j, 1); // Returns id
@@ -254,7 +258,7 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
     // Populate queues based on tasks
     for (let i = 1; i <= max_task_id; i++) {
         let task = tasks[i];
-        if (task === undefined || task.alive === false) {
+        if (task === undefined) {
             empty_task_ids.add(i);
             continue;
         }
@@ -320,78 +324,76 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
     last_cpu = Game.cpu.getUsed();
     startup_cpu = global.kernel_last_startup_cpu = last_cpu - boot_cpu;
     /** Run Tasks **/
-    execute_tasks: {
+    for (let i = 0; i < queues.length; i++) { // Don't use for...of because `i` is needed below.
+        let queue = queues[i];
+        min_task_priority = i;
         let strikes = 0;
-        for (let i = 0; i < queues.length; i++) { // Don't use for...of because `i` is needed below.
-            let queue = queues[i];
-            min_task_priority = i;
-            while (queue.length > 0) {
-                if (strikes > 2)
-                    break execute_tasks; // After 3 scheduling fails, stop trying
-                let task = tasks[queue[0]];
-                if (task.alive === false) { // Don't run killed tasks
-                    queue.shift();
-                    continue;
-                }
-                let average_cost = task.cost_μ + last_cpu + shutdown_μ;
-                // Add 2 sigma to both task & shutdown estimates, should cover 99.95% of cases.
-                let max_likely_cost = average_cost + Math.sqrt(task.cost_σ2 * 2) + Math.sqrt(shutdown_σ2 * 2);
-                let ret = RETURN_CODE_ERROR;
-                switch (i) {
-                    case exports.PRIORITY.CRITICAL:
-                        // Run every tick, regardless of CPU cost.
+        while (queue.length > 0) {
+            if (strikes > 2)
+                break; // After 3 scheduling fails, move to next queue
+            let task = tasks[queue[0]];
+            if (task === undefined) { // Don't run killed tasks
+                queue.shift();
+                continue;
+            }
+            let average_cost = task.cost_μ + last_cpu + shutdown_μ;
+            // Add 2 sigma to both task & shutdown estimates, should cover 99.95% of cases.
+            let max_likely_cost = average_cost + Math.sqrt(task.cost_σ2 * 2) + Math.sqrt(shutdown_σ2 * 2);
+            let ret = RETURN_CODE_ERROR;
+            switch (i) {
+                case exports.PRIORITY.CRITICAL:
+                    // Run every tick, regardless of CPU cost.
+                    queue.shift(); // Remove task id from queue
+                    ret = execute(task);
+                    break;
+                case exports.PRIORITY.HIGH:
+                    // Run only if task is anticipated not to exceed `Game.cpu.tickLimit`.
+                    if (max_likely_cost < Game.cpu.tickLimit) {
+                        ret = execute(task);
+                        queue.shift(); // Remove task id from queue
+                    }
+                    else {
+                        strikes++;
+                        queue.push(queue.shift()); // Move task id to back of queue
+                        continue;
+                    }
+                    break;
+                case exports.PRIORITY.MEDIUM:
+                    // Run if task is anticipated not to exceed `Game.cpu.limit`,
+                    // or anticipated not to exceed `Game.cpu.tickLimit` if `Game.cpu.bucket > bucket_threshold`
+                    if (average_cost < Game.cpu.limit ||
+                        (max_likely_cost < Game.cpu.tickLimit && Game.cpu.bucket > bucket_threshold)) {
                         queue.shift(); // Remove task id from queue
                         ret = execute(task);
-                        break;
-                    case exports.PRIORITY.HIGH:
-                        // Run only if task is anticipated not to exceed `Game.cpu.tickLimit`.
-                        if (max_likely_cost < Game.cpu.tickLimit) {
-                            ret = execute(task);
-                            queue.shift(); // Remove task id from queue
-                        }
-                        else {
-                            strikes++;
-                            queue.push(queue.shift()); // Move task id to back of queue
-                            continue;
-                        }
-                        break;
-                    case exports.PRIORITY.MEDIUM:
-                        // Run if task is anticipated not to exceed `Game.cpu.limit`,
-                        // or anticipated not to exceed `Game.cpu.tickLimit` if `Game.cpu.bucket > bucket_threshold`
-                        if (average_cost < Game.cpu.limit ||
-                            (max_likely_cost < Game.cpu.tickLimit && Game.cpu.bucket > bucket_threshold)) {
-                            queue.shift(); // Remove task id from queue
-                            ret = execute(task);
-                        }
-                        else {
-                            strikes++;
-                            queue.push(queue.shift()); // Move task id to back of queue
-                            continue;
-                        }
-                        break;
-                    case exports.PRIORITY.LOW:
-                        // Run only if task is anticipated not to exceed `Game.cpu.limit`.
-                        if (average_cost < Game.cpu.limit) {
-                            queue.shift(); // Remove task id from queue
-                            ret = execute(task);
-                        }
-                        else {
-                            strikes++;
-                            queue.push(queue.shift()); // Move task id to back of queue
-                            continue;
-                        }
-                        break;
-                }
-                let task_cpu = Game.cpu.getUsed();
-                if (ret !== RETURN_CODE_ERROR)
-                    update_statistics(task_cpu - last_cpu, task);
-                last_cpu = task_cpu;
-                // Check to see if any additional tasks with 'higher' priority were scheduled.
-                if (min_task_priority < i) {
-                    // 'i' is incremented at end of 'for' loop, after breaking this loop, thus subtract 1 to compensate
-                    i = min_task_priority - 1;
+                    }
+                    else {
+                        strikes++;
+                        queue.push(queue.shift()); // Move task id to back of queue
+                        continue;
+                    }
                     break;
-                }
+                case exports.PRIORITY.LOW:
+                    // Run only if task is anticipated not to exceed `Game.cpu.limit`.
+                    if (average_cost < Game.cpu.limit) {
+                        queue.shift(); // Remove task id from queue
+                        ret = execute(task);
+                    }
+                    else {
+                        strikes++;
+                        queue.push(queue.shift()); // Move task id to back of queue
+                        continue;
+                    }
+                    break;
+            }
+            let task_cpu = Game.cpu.getUsed();
+            if (ret !== RETURN_CODE_ERROR)
+                update_statistics(task_cpu - last_cpu, task);
+            last_cpu = task_cpu;
+            // Check to see if any additional tasks with 'higher' priority were scheduled.
+            if (min_task_priority < i) {
+                // 'i' is incremented at end of 'for' loop, after breaking this loop, thus subtract 1 to compensate
+                i = min_task_priority - 1;
+                break;
             }
         }
     }
