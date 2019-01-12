@@ -8,13 +8,14 @@ export declare enum PRIORITY {
 export declare const PRIORITY_COUNT: number;
 export declare type Object_ID = string | number;
 export declare type Task_Args = Array<Object_ID>;
-export declare type Task_Function = (...args: Task_Args) => number;
-export declare type Task_Key = string;
+export declare type Task_Function = () => number;
+export declare type Task_Factory = (...args: Task_Args) => Task_Function;
+export declare type Task_Factory_Key = string;
 export declare type Task_ID = number;
 export declare type Task = {
     id: Task_ID;
     priority: PRIORITY;
-    task_key: Task_Key;
+    task_key: Task_Factory_Key;
     patience: number;
     cost_μ: number;
     cost_σ2: number;
@@ -29,6 +30,8 @@ export declare type Tasks = Record<Task_ID, Task>;
  * Multilevel Priority Queues. Each Queue corresponds to a PRIORITY level. Lower priorities are run first.
  *
  * If tasks are left unfinished in a given tick, they may be bumped to a lower priority Queue.
+ *
+ * The first item in each queue is an iteration index.
  */
 export declare type Queues = Array<Array<Task_ID>>;
 export interface Kernel_Stats {
@@ -43,7 +46,6 @@ export interface Kernel_Stats {
 export interface Kernel_Data {
     stats: Kernel_Stats;
     tasks: Tasks;
-    queues: Queues;
     max_task_id: number;
     unused_ids: Array<Task_ID>;
 }

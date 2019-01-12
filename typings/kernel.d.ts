@@ -1,4 +1,4 @@
-import { Task_Function, Task } from "./data_structures";
+import { Task_Factory, Task } from "./data_structures";
 export declare type Logger = (level: LOG_LEVEL, message: string) => void;
 /***********
  * Exports *
@@ -10,8 +10,7 @@ export declare enum LOG_LEVEL {
     ERROR = 2,
     WARN = 3,
     INFO = 4,
-    DEBUG = 5,
-    TRACE = 6
+    DEBUG = 5
 }
 /**
  * Returns the tasks scheduled to run the next tick.
@@ -26,16 +25,18 @@ export declare const tasks: Record<number, Task>;
  */
 export declare let current_task: number;
 /**
- * Register the code object to be run as part of a task. This function should only be called outside of the main
- * loop, before the kernel is run for the first time.
+ * Register the code object to be generate the task function.
  *
- * @param {Task_Key} key - A unique key used to identify which function to call to run the task. Also used as the
+ * Note - This function should only be called outside of the main loop, before the kernel is run for the first time.
+ * It should also be called before any `create_task` calls that reference this factory.
+ *
+ * @param {Task_Factory_Key} key - A unique key used to identify which function to call to run the task. Also used as the
  * `task_key` value that needs to be passed to `create_task`.
- * @param {Task_Function} fn - The function that will be run by the task.
+ * @param {Task_Factory} fn - The function that will be run by the task.
  */
-export declare const register_task_function: ({ key, fn }: {
+export declare const register_task_factory: ({ key, fn }: {
     key: string;
-    fn: Task_Function;
+    fn: Task_Factory;
 }) => void;
 /**
  * Create a new task, which will be queued immediately (unless called after the kernel has executed).
@@ -45,7 +46,7 @@ export declare const register_task_function: ({ key, fn }: {
  * elevated to the next priority level.
  * @param {number} cost_μ - Estimated CPU cost to run the function. Actual CPU cost will be measured and recorded,
  * but an initial estimate is required. To avoid accidentally hitting cpu.tickLimit, don't underestimate.
- * @param {Task_Key} task_key - Unique key returned by `register_task_function` for the function to be called to run the
+ * @param {Task_Factory_Key} task_key - Unique key returned by `register_task_factory` for the function to be called to run the
  * task.
  * @param {Task_Args} task_args - Array of names or ids for game objects that will be passed to the task function.
  * @param {Task_ID} [parent] - ID of parent task, if it is different from the caller.

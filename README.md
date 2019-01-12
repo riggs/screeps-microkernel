@@ -25,20 +25,31 @@ Be sure to `import * as kernel from 'screeps-microkernel';` / `let kernel = requ
 
 ## Writing Tasks
 
+Because it's presumed that there will be many instances of a given task's code running for different game objects,
+Tasks shall take the form of a function closure or coroutine in order to store local state in heap memory. Tasks 
+factory functions are initialized with IDs of game objects, which must then return a function that will be called 
+with no arguments.
+
+Tasks shall persist any data they need to rebuild their state in game Memory, 
+
+#### Task Factories
+Task Factories create and initialize Task Functions from task arguments. Task Factories have a signature of
+`(...args) => () => RETURN_CODE`.
+
 #### Task Functions
-Task functions must have a signature of `(...args) => RETURN_CODE`. If `RETURN_CODE` is non-zero, the kernel will log
+Task functions must have a signature of `() => RETURN_CODE`. If `RETURN_CODE` is non-zero, the kernel will log
  an error.
 
 The task's `args` are provided when creating the task. These can only be `string`s or `number`s
  because of serialization. The `args` are intended to be used to provide the name(s) or id(s) of
  game entities for the task to operate on.
 
-#### Registering Task Functions
+#### Registering Task Factories
 Because object references are lost on a code reload, the kernel needs references to the appropriate function to run for 
- each task. The kernel function `register_task_function` is used to provide this reference to the kernel and returns
+ each task. The kernel function `register_task_factory` is used to provide this reference to the kernel and returns
  a 'task key' for the task. Every task function must be registered with the kernel before the kernel is run, and should
  be done outside of the main loop, as `register` doesn't deduplicate registrations. The 'task key' returned by 
- `register_task_function` must be passed as the `task_key` parameter to `create_task`.
+ `register_task_factory` must be passed as the `task_key` parameter to `create_task`.
 
 #### Creating Tasks
 The function will be called with the arguments provided to the `create_task` function via the `task_args` parameter.
@@ -73,9 +84,9 @@ Every tick that a task is not able to run due to CPU limits is recorded as being
 As a task becomes more stagnant, it will be bumped up to a higher priority level until it
 is able to run.
 
-## System Calls ## FIXME
+## System Calls `FIXME`
 
-##### `register_task_function`
+##### `register_task_factory`
 Registers a code object with the kernel that can be run by one or more tasks.
 
 ##### `create_task`
