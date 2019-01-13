@@ -2,6 +2,8 @@ const kernel = require("kernel.bundle.cjs");
 
 global.kernel = kernel;
 
+kernel.logger.level = kernel.LOG.LEVEL.DEBUG;
+
 const fib = (n) => {
   if ( n === 1 || n === 0 ) return 1;
   return fib(n-1) + fib(n-2);
@@ -34,6 +36,8 @@ const spawn_task = (n) => () => {
     });
     console.log(`Spawning task ${n} with id: ${id}`);
     Memory.test[SPAWN_TASK_KEY] = count + 1;
+  } else {
+    kernel.logger.level = kernel.LOG.LEVEL.TRACE;
   }
   return 0;
 };

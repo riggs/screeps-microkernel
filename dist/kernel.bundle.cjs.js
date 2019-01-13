@@ -10,8 +10,6 @@ Object.defineProperty(exports, '__esModule', { value: true });
 })(exports.PRIORITY || (exports.PRIORITY = {}));
 const PRIORITY_COUNT = exports.PRIORITY.LOW + 1;
 
-const MINIMUM_SAFE_BUCKET = 1000; // Ensure bucket doesn't drop below 500, because booting is CPU intensive.
-const FULL_BUCKET = 10000;
 const DEFAULT_α_MIN = 0.02; // Last 100 ticks have ~85% influence on EMA, aka '100-day EMA'.
 const DEFAULT_α_DECAY = 0.8; // Rate at which α decays from 0.5 to alpha_min each tick. Increase if high CPU
 // costs when relaunching are negatively impacting CPU estimates later on.
@@ -60,22 +58,6 @@ if (queues.length !== PRIORITY_COUNT) {
 }
 let min_task_priority = exports.PRIORITY.LOW;
 let { max_task_id } = kernel; // Removes need to iterate over all task id space.
-const logger_factory = (log_level, logger) => {
-    const _ = (level) => {
-        return (message) => {
-            if (level >= log_level) {
-                logger(level, message);
-            }
-        };
-    };
-    return {
-        FATAL: _(exports.LOG_LEVEL.FATAL),
-        ERROR: _(exports.LOG_LEVEL.ERROR),
-        WARN: _(exports.LOG_LEVEL.WARN),
-        INFO: _(exports.LOG_LEVEL.INFO),
-        DEBUG: _(exports.LOG_LEVEL.DEBUG),
-    };
-};
 /**
  * This object holds the factory functions used to initialize the actual functions called by the kernel.
  */
@@ -84,15 +66,67 @@ const Task_Factories = {};
  * This object holds the actual functions to be called for each task.
  */
 const Task_Functions = {};
-(function (LOG_LEVEL) {
-    LOG_LEVEL[LOG_LEVEL["OFF"] = 0] = "OFF";
-    LOG_LEVEL[LOG_LEVEL["FATAL"] = 1] = "FATAL";
-    LOG_LEVEL[LOG_LEVEL["ERROR"] = 2] = "ERROR";
-    LOG_LEVEL[LOG_LEVEL["WARN"] = 3] = "WARN";
-    LOG_LEVEL[LOG_LEVEL["INFO"] = 4] = "INFO";
-    LOG_LEVEL[LOG_LEVEL["DEBUG"] = 5] = "DEBUG";
-    // TRACE
-})(exports.LOG_LEVEL || (exports.LOG_LEVEL = {}));
+/**
+ * Optional parameters for advanced kernel configuration:
+ *
+ * A minimum value for the α parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
+ */
+const alpha_min = DEFAULT_α_MIN;
+/**
+ * Decay rate of α per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
+ */
+const alpha_decay = DEFAULT_α_DECAY;
+/**
+ * Minimum bucket level for MEDIUM priority tasks to run if they will exceed
+ */
+const bucket_threshold = DEFAULT_BUCKET_THRESHOLD;
+/**
+ * Initial CPU estimate for shutdown kernel process.
+ */
+const shutdown_cpu_estimate = DEFAULT_SHUTDOWN_CPU_ESTIMATE;
+/**
+ * Acceptable range of CPU performance measured in standard deviations from the mean.
+ */
+const sigma_range = DEFAULT_SIGMA_RANGE;
+var LEVEL;
+(function (LEVEL) {
+    LEVEL[LEVEL["OFF"] = 0] = "OFF";
+    LEVEL[LEVEL["FATAL"] = 1] = "FATAL";
+    LEVEL[LEVEL["ERROR"] = 2] = "ERROR";
+    LEVEL[LEVEL["WARN"] = 3] = "WARN";
+    LEVEL[LEVEL["INFO"] = 4] = "INFO";
+    LEVEL[LEVEL["DEBUG"] = 5] = "DEBUG";
+    LEVEL[LEVEL["TRACE"] = 6] = "TRACE";
+})(LEVEL || (LEVEL = {}));
+const logger = {
+    /**
+     * Minimum logging level.
+     */
+    level: LEVEL.WARN,
+    /**
+     * Set this attribute to define a custom logging function.
+     */
+    fn: ((level, message) => console.log(`[${LEVEL[level]}]`, message))
+};
+const l = (level) => {
+    return (message) => {
+        if (level <= logger.level) {
+            logger.fn(level, message);
+        }
+    };
+};
+const LOG = {
+    LEVEL,
+    /**
+     * Convenience functions for logging.
+     */
+    FATAL: l(LEVEL.FATAL),
+    ERROR: l(LEVEL.ERROR),
+    WARN: l(LEVEL.WARN),
+    INFO: l(LEVEL.INFO),
+    DEBUG: l(LEVEL.DEBUG),
+    TRACE: l(LEVEL.TRACE),
+};
 /**
  * Returns the tasks scheduled to run the next tick.
  *
@@ -217,26 +251,9 @@ const kill_task = (id = exports.current_task) => {
     return killed;
 };
 /**
- * This function is called when CPU performance is outside of acceptable parameters.
- *
- * @callback logger_callback
- * @param {LOG_LEVEL} level - Log level.
- * @param {string} message - Message to log.
- */
-/**
  * Run the kernel.
- *
- * Optional parameters for advanced configuration:
- * @param {number} [alpha_min] - A minimum value for the α parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
- * @param {number} [alpha_decay] - Decay rate of α per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
- * @param {number} [bucket_threshold] - Minimum bucket level for MEDIUM priority tasks to run if they will exceed
- * Game.cpu.limit
- * @param {number} [shutdown_cpu_estimate] - Initial CPU estimate for shutdown kernel process.
- * @param {number} [sigma_range] - Acceptable range of CPU performance measured in standard deviations from the mean.
- * @param {LOG_LEVEL} [log_level] - Minimum logging level.
- * @param {logger_callback} [logger] - Function that is called for logging.
  */
-const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucket_threshold = DEFAULT_BUCKET_THRESHOLD, shutdown_cpu_estimate = DEFAULT_SHUTDOWN_CPU_ESTIMATE, sigma_range = DEFAULT_SIGMA_RANGE, log_level = exports.LOG_LEVEL.WARN, logger = ((level, message) => console.log(`[${exports.LOG_LEVEL[level]}]`, message)) }) => {
+const run = () => {
     // Finish booting, if necessary
     let boot_cpu = 0;
     const kernel_α = stats.α;
@@ -257,27 +274,17 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
         const δ = boot_cpu - boot_average;
         stats.boot_μ = boot_average + kernel_α * δ;
         stats.boot_σ2 = (1 - kernel_α) * (stats.boot_σ2 + kernel_α * δ ** 2);
-        logger(exports.LOG_LEVEL.DEBUG, `Boot cpu cost: ${boot_cpu}, δ: ${δ}`);
+        LOG.DEBUG(`Boot cpu cost: ${boot_cpu}, δ: ${δ}`);
         booting = false;
-    }
-    /** Startup **/
-    // Input Validation
-    if (!(alpha_min > 0 || alpha_min < 0.5))
-        throw new Error("Invalid alpha_min parameter");
-    if (!(alpha_decay > 0 || alpha_decay < 1))
-        throw new Error("Invalid alpha_decay parameter");
-    if (!(bucket_threshold > MINIMUM_SAFE_BUCKET || bucket_threshold < FULL_BUCKET)) {
-        throw new Error(`bucket_threshold parameter must be between ${MINIMUM_SAFE_BUCKET} and ${FULL_BUCKET}`);
     }
     delete global.Memory;
     global.Memory = memory;
-    const { FATAL, ERROR, WARN, INFO, DEBUG, } = logger_factory(log_level, logger);
     const execute = (task, p, index) => {
         const { id, priority } = task;
         // TRACE(`${id} [${idx}]`);
         task.skips = 0; // Update before running to avoid looping if function killed by tickLimit
         if (Task_Functions[id] === undefined) {
-            ERROR(`Task ${id} not initialized`);
+            LOG.ERROR(`Task ${id} not initialized`);
             return RETURN_CODE_ERROR;
         }
         if (p !== priority)
@@ -287,10 +294,10 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
         try {
             ret = Task_Functions[id]();
             if (ret !== RETURN_CODE_OK)
-                ERROR(`Task ${id} returned nonzero exit code: ${ret}`);
+                LOG.ERROR(`Task ${id} returned nonzero exit code: ${ret}`);
         }
         catch (e) {
-            ERROR(`Task ${id} threw ${e.name}: ${e}`);
+            LOG.ERROR(`Task ${id} threw ${e.name}: ${e}`);
         }
         exports.current_task = ROOT_TASK_ID;
         return ret;
@@ -300,7 +307,7 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
         if (task.skips % task.patience === 0) {
             queues[priority].splice(index, 1); // Returns id
             queues[priority - 1].push(task.id);
-            INFO(`Elevating task ${task.id}`);
+            LOG.INFO(`Elevating task ${task.id}`);
         }
     };
     /**
@@ -321,7 +328,7 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
         // Via https://en.wikipedia.org/wiki/Standard_score
         const σ = δ / Math.sqrt(cost_σ2);
         if (Math.abs(σ) > sigma_range)
-            WARN(`Task ${id} had abnormal CPU cost: ${cpu}`);
+            LOG.WARN(`Task ${id} had abnormal CPU cost: ${cpu}`);
         Object.assign(task, { cost_μ, cost_σ2, α }); // Update stats on task object.
     };
     const shutdown_μ = stats.shutdown_μ === undefined ? shutdown_cpu_estimate : stats.shutdown_μ;
@@ -334,7 +341,7 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
     idx.fill(0);
     outer: for (let i = 0; i < queues.length; i++) {
         let queue = queues[i];
-        // TRACE(`${PRIORITY[i]} [${queue}]`);
+        // LOG.TRACE(`${PRIORITY[i]} [${queue}]`);
         min_task_priority = i;
         while (idx[i] < queue.length) {
             let j = idx[i];
@@ -346,8 +353,8 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
             let average_cost = task.cost_μ + last_cpu + shutdown_μ;
             // Add 2 sigma to both task & shutdown estimates, should cover 99.95% of cases.
             let max_likely_cost = average_cost + Math.sqrt(task.cost_σ2 * 2) + Math.sqrt(shutdown_σ2 * 2);
-            // TRACE(`CPU: ${Game.cpu.getUsed() - last_cpu}`);
-            // TRACE(`${task.id} [${idx}]`);
+            // LOG.TRACE(`CPU: ${Game.cpu.getUsed() - last_cpu}`);
+            // LOG.TRACE(`${task.id} [${idx}]`);
             let ret = RETURN_CODE_ERROR;
             switch (i) {
                 case exports.PRIORITY.CRITICAL:
@@ -414,12 +421,19 @@ const run = ({ alpha_min = DEFAULT_α_MIN, alpha_decay = DEFAULT_α_DECAY, bucke
     // Store the final shutdown CPU cost in cache after memory has been serialized.
     // Will occasionally loose 1 tick of data here, an acceptable trade-off for recording serialization costs.
     const shutdown_cpu = global.kernel_last_shutdown_cpu = (global.kernel_last_tick_cpu = Game.cpu.getUsed()) - last_cpu;
-    DEBUG(`Shutdown CPU cost: ${shutdown_cpu}`);
+    // TRACE(`Shutdown CPU cost: ${shutdown_cpu}`);
     const shutdown_delta = shutdown_cpu - (stats.shutdown_μ === undefined ? shutdown_cpu : stats.shutdown_μ);
     stats.shutdown_μ = (stats.shutdown_μ === undefined ? 0 : stats.shutdown_μ) + kernel_α * shutdown_delta;
     stats.shutdown_σ2 = (1 - kernel_α) * (stats.shutdown_σ2 + kernel_α * shutdown_delta ** 2);
 };
 
+exports.alpha_min = alpha_min;
+exports.alpha_decay = alpha_decay;
+exports.bucket_threshold = bucket_threshold;
+exports.shutdown_cpu_estimate = shutdown_cpu_estimate;
+exports.sigma_range = sigma_range;
+exports.logger = logger;
+exports.LOG = LOG;
 exports.tasks = tasks;
 exports.register_task_factory = register_task_factory;
 exports.create_task = create_task;

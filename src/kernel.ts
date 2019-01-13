@@ -67,26 +67,6 @@ let min_task_priority = PRIORITY.LOW;
 
 let { max_task_id } = kernel;   // Removes need to iterate over all task id space.
 
-export type Logger = (level: LOG_LEVEL, message: string) => void;
-
-const logger_factory = (log_level: LOG_LEVEL, logger: Logger) => {
-    const _ = (level: LOG_LEVEL) => {
-        return (message: string) => {
-            if ( level >= log_level ) {
-                logger(level, message);
-            }
-        }
-    };
-    return {
-        FATAL: _(LOG_LEVEL.FATAL),
-        ERROR: _(LOG_LEVEL.ERROR),
-        WARN: _(LOG_LEVEL.WARN),
-        INFO: _(LOG_LEVEL.INFO),
-        DEBUG: _(LOG_LEVEL.DEBUG),
-        // TRACE: _(LOG_LEVEL.TRACE),
-    }
-};
-
 /**
  * This object holds the factory functions used to initialize the actual functions called by the kernel.
  */
@@ -97,20 +77,84 @@ const Task_Factories: Record<Task_Factory_Key, Task_Factory> = {};
  */
 const Task_Functions: Record<Task_ID, Task_Function> = {};
 
-/***********
- * Exports *
- ***********/
+
+/***************************
+ ********* Exports *********
+ ***************************/
+
 export { PRIORITY, Task_ID } from "./data_structures";
 
-export enum LOG_LEVEL {
+/**
+ * Optional parameters for advanced kernel configuration:
+ *
+ * A minimum value for the α parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
+ */
+export const alpha_min = DEFAULT_α_MIN;
+/**
+ * Decay rate of α per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
+ */
+export const alpha_decay = DEFAULT_α_DECAY;
+/**
+ * Minimum bucket level for MEDIUM priority tasks to run if they will exceed
+ */
+export const bucket_threshold = DEFAULT_BUCKET_THRESHOLD;
+/**
+ * Initial CPU estimate for shutdown kernel process.
+ */
+export const shutdown_cpu_estimate = DEFAULT_SHUTDOWN_CPU_ESTIMATE;
+/**
+ * Acceptable range of CPU performance measured in standard deviations from the mean.
+ */
+export const sigma_range = DEFAULT_SIGMA_RANGE;
+
+enum LEVEL {
     OFF = 0,
     FATAL,
     ERROR,
     WARN,
     INFO,
     DEBUG,
-    // TRACE
+    TRACE
 }
+
+/**
+ * This function is called for logging.
+ *
+ * @param {LOG.LEVEL} level - Log level.
+ * @param {string} message - Message to log.
+ */
+export type Logger = (level: LEVEL, message: string) => void;
+export const logger = {
+    /**
+     * Minimum logging level.
+     */
+    level: LEVEL.WARN,
+    /**
+     * Set this attribute to define a custom logging function.
+     */
+    fn: ( (level, message) => console.log(`[${LEVEL[level]}]`, message) ) as Logger
+};
+
+const l = (level: LEVEL) => {
+    return (message: string) => {
+        if ( level <= logger.level ) {
+            logger.fn(level, message);
+        }
+    }
+};
+
+export const LOG = {
+    LEVEL,
+    /**
+     * Convenience functions for logging.
+     */
+    FATAL: l(LEVEL.FATAL),
+    ERROR: l(LEVEL.ERROR),
+    WARN: l(LEVEL.WARN),
+    INFO: l(LEVEL.INFO),
+    DEBUG: l(LEVEL.DEBUG),
+    TRACE: l(LEVEL.TRACE),
+};
 
 /**
  * Returns the tasks scheduled to run the next tick.
@@ -246,36 +290,9 @@ export const kill_task = (id: Task_ID = current_task): Array<Task_ID> => {
 };
 
 /**
- * This function is called when CPU performance is outside of acceptable parameters.
- *
- * @callback logger_callback
- * @param {LOG_LEVEL} level - Log level.
- * @param {string} message - Message to log.
- */
-
-/**
  * Run the kernel.
- *
- * Optional parameters for advanced configuration:
- * @param {number} [alpha_min] - A minimum value for the α parameter of the EMA. Must satisfy 0 < alpha_min < 0.5
- * @param {number} [alpha_decay] - Decay rate of α per tick from 0.5 to alpha_min. 0 < alpha_decay < 1
- * @param {number} [bucket_threshold] - Minimum bucket level for MEDIUM priority tasks to run if they will exceed
- * Game.cpu.limit
- * @param {number} [shutdown_cpu_estimate] - Initial CPU estimate for shutdown kernel process.
- * @param {number} [sigma_range] - Acceptable range of CPU performance measured in standard deviations from the mean.
- * @param {LOG_LEVEL} [log_level] - Minimum logging level.
- * @param {logger_callback} [logger] - Function that is called for logging.
  */
-export const run = ({
-        alpha_min = DEFAULT_α_MIN,
-        alpha_decay = DEFAULT_α_DECAY,
-        bucket_threshold = DEFAULT_BUCKET_THRESHOLD,
-        shutdown_cpu_estimate = DEFAULT_SHUTDOWN_CPU_ESTIMATE,
-        sigma_range = DEFAULT_SIGMA_RANGE,
-        log_level = LOG_LEVEL.WARN,
-        logger = ( (level, message) => console.log(`[${LOG_LEVEL[level]}]`, message) ) as Logger
-    }) => {
-
+export const run = () => {
     // Finish booting, if necessary
     let boot_cpu = 0;
     const kernel_α = stats.α;
@@ -298,7 +315,7 @@ export const run = ({
         const δ = boot_cpu - boot_average;
         stats.boot_μ = boot_average + kernel_α * δ;
         stats.boot_σ2 = ( 1 - kernel_α ) * ( stats.boot_σ2 + kernel_α * δ ** 2 );
-        logger(LOG_LEVEL.DEBUG, `Boot cpu cost: ${boot_cpu}, δ: ${δ}`);
+        LOG.DEBUG(`Boot cpu cost: ${boot_cpu}, δ: ${δ}`);
         booting = false;
     }
 
@@ -313,21 +330,12 @@ export const run = ({
     delete global.Memory;
     global.Memory = memory;
 
-    const {
-        FATAL,
-        ERROR,
-        WARN,
-        INFO,
-        DEBUG,
-        // TRACE,  // On it's own line so I can easily remove every trace of TRACE.
-    } = logger_factory(log_level, logger);
-
     const execute = (task: Task, p: PRIORITY, index: number): number | symbol => {
         const { id, priority } = task;
         // TRACE(`${id} [${idx}]`);
         task.skips = 0; // Update before running to avoid looping if function killed by tickLimit
         if ( Task_Functions[id] === undefined ) {
-            ERROR(`Task ${id} not initialized`);
+            LOG.ERROR(`Task ${id} not initialized`);
             return RETURN_CODE_ERROR
         }
         if ( p !== priority ) queues[priority].push(queues[p].splice(index, 1)[0]);
@@ -335,9 +343,9 @@ export const run = ({
         let ret: symbol | number = RETURN_CODE_ERROR;
         try {
             ret = Task_Functions[id]();
-            if ( ret !== RETURN_CODE_OK ) ERROR(`Task ${id} returned nonzero exit code: ${ret}`);
+            if ( ret !== RETURN_CODE_OK ) LOG.ERROR(`Task ${id} returned nonzero exit code: ${ret}`);
         } catch ( e ) {
-            ERROR(`Task ${id} threw ${e.name}: ${e}`);
+            LOG.ERROR(`Task ${id} threw ${e.name}: ${e}`);
         }
         current_task = ROOT_TASK_ID;
         return ret
@@ -348,7 +356,7 @@ export const run = ({
         if ( task.skips % task.patience === 0) {
             queues[priority].splice(index, 1); // Returns id
             queues[priority - 1].push(task.id);
-            INFO(`Elevating task ${task.id}`);
+            LOG.INFO(`Elevating task ${task.id}`);
         }
     };
 
@@ -370,7 +378,7 @@ export const run = ({
         if ( α > alpha_min ) α = α * alpha_decay;  // Update α for next tick.
         // Via https://en.wikipedia.org/wiki/Standard_score
         const σ = δ / Math.sqrt(cost_σ2);
-        if ( Math.abs(σ) > sigma_range ) WARN(`Task ${id} had abnormal CPU cost: ${cpu}`);
+        if ( Math.abs(σ) > sigma_range ) LOG.WARN(`Task ${id} had abnormal CPU cost: ${cpu}`);
         Object.assign(task, { cost_μ, cost_σ2, α }); // Update stats on task object.
     };
 
@@ -386,7 +394,7 @@ export const run = ({
     idx.fill(0);
     outer: for ( let i = 0; i < queues.length; i++ ) {
         let queue = queues[i];
-        // TRACE(`${PRIORITY[i]} [${queue}]`);
+        // LOG.TRACE(`${PRIORITY[i]} [${queue}]`);
         min_task_priority = i;
         while ( idx[i] < queue.length ) {
             let j = idx[i];
@@ -398,8 +406,8 @@ export const run = ({
             let average_cost = task.cost_μ + last_cpu + shutdown_μ;
             // Add 2 sigma to both task & shutdown estimates, should cover 99.95% of cases.
             let max_likely_cost = average_cost + Math.sqrt(task.cost_σ2 * 2) + Math.sqrt(shutdown_σ2 * 2);
-            // TRACE(`CPU: ${Game.cpu.getUsed() - last_cpu}`);
-            // TRACE(`${task.id} [${idx}]`);
+            // LOG.TRACE(`CPU: ${Game.cpu.getUsed() - last_cpu}`);
+            // LOG.TRACE(`${task.id} [${idx}]`);
             let ret: symbol | number = RETURN_CODE_ERROR;
             switch ( i ) {
                 case PRIORITY.CRITICAL:
@@ -466,7 +474,7 @@ export const run = ({
     // Store the final shutdown CPU cost in cache after memory has been serialized.
     // Will occasionally loose 1 tick of data here, an acceptable trade-off for recording serialization costs.
     const shutdown_cpu = global.kernel_last_shutdown_cpu = ( global.kernel_last_tick_cpu = Game.cpu.getUsed() ) - last_cpu;
-    DEBUG(`Shutdown CPU cost: ${shutdown_cpu}`);
+    // TRACE(`Shutdown CPU cost: ${shutdown_cpu}`);
     const shutdown_delta = shutdown_cpu - ( stats.shutdown_μ === undefined ? shutdown_cpu : stats.shutdown_μ );
     stats.shutdown_μ = ( stats.shutdown_μ === undefined ? 0 : stats.shutdown_μ ) + kernel_α * shutdown_delta;
     stats.shutdown_σ2 = ( 1 - kernel_α ) * ( stats.shutdown_σ2 + kernel_α * shutdown_delta ** 2 );
