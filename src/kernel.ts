@@ -180,7 +180,7 @@ export let current_task: number = ROOT_TASK_ID;
  * `task_key` value that needs to be passed to `create_task`.
  * @param {Task_Factory} fn - The function that will be run by the task.
  */
-export const register_task_factory = ({key, fn}: {key: Task_Factory_Key, fn: Task_Factory}) => {
+export const register_task_function = ({key, fn}: {key: Task_Factory_Key, fn: Task_Factory}) => {
     if ( Task_Factories[key] !== undefined && Task_Factories[key] !== fn ) {
         throw new Error(`Task key used for multiple task factories: ${key}`)
     }
@@ -195,7 +195,7 @@ export const register_task_factory = ({key, fn}: {key: Task_Factory_Key, fn: Tas
  * elevated to the next priority level.
  * @param {number} cost_μ - Estimated CPU cost to run the function. Actual CPU cost will be measured and recorded,
  * but an initial estimate is required. To avoid accidentally hitting cpu.tickLimit, don't underestimate.
- * @param {Task_Factory_Key} task_key - Unique key returned by `register_task_factory` for the function to be called to run the
+ * @param {Task_Factory_Key} task_key - Unique key returned by `register_task_function` for the function to be called to run the
  * task.
  * @param {Task_Args} task_args - Array of names or ids for game objects that will be passed to the task function.
  * @param {Task_ID} [parent] - ID of parent task, if it is different from the caller.

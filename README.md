@@ -46,10 +46,10 @@ The task's `args` are provided when creating the task. These can only be `string
 
 #### Registering Task Factories
 Because object references are lost on a code reload, the kernel needs references to the appropriate function to run for 
- each task. The kernel function `register_task_factory` is used to provide this reference to the kernel and returns
+ each task. The kernel function `register_task_function` is used to provide this reference to the kernel and returns
  a 'task key' for the task. Every task function must be registered with the kernel before the kernel is run, and should
  be done outside of the main loop, as `register` doesn't deduplicate registrations. The 'task key' returned by 
- `register_task_factory` must be passed as the `task_key` parameter to `create_task`.
+ `register_task_function` must be passed as the `task_key` parameter to `create_task`.
 
 #### Creating Tasks
 The function will be called with the arguments provided to the `create_task` function via the `task_args` parameter.
@@ -86,7 +86,7 @@ is able to run.
 
 ## System Calls `FIXME`
 
-##### `register_task_factory`
+##### `register_task_function`
 Registers a code object with the kernel that can be run by one or more tasks.
 
 ##### `create_task`
